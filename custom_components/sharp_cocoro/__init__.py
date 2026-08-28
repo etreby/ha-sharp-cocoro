@@ -43,7 +43,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
-PLATFORMS: list[Platform] = [Platform.FAN, Platform.CLIMATE, Platform.SENSOR]
+# BINARY_SENSOR, BUTTON and SWITCH added 2026-08-20 for the properties the
+# upstream integration ignores: CF (ion, settable both ways) and 8F (eco,
+# readable and cancellable but not engageable -- hence a sensor plus a button
+# rather than a switch).
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.CLIMATE,
+    Platform.FAN,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 CocoroConfigEntry = ConfigEntry[Cocoro]
 

@@ -45,6 +45,20 @@ You can also install manually by copying the `custom_components` from this repos
 
 Check README of https://github.com/dvcrn/sharp-cocoro
 
+**Sharp appliances sold in Egypt (El Araby) are a different service** —
+`serviceName` is `sharp-egy`, and the account login is El Araby's own Azure AD
+B2C tenant rather than Sharp's. None of that is documented anywhere else, and
+several of its failure responses mean something other than what they say, so it
+has its own guide:
+
+- **[Connecting a Sharp air conditioner in Egypt (El Araby)](./docs/egypt-el-araby.md)**
+
+The short version, if you only read one thing: `app_key` is not a secret to go
+and find, it is minted per installation — and **binding a freshly minted one does
+not pair it to your appliances**, so a new key can authenticate perfectly and
+still stop the integration from loading. If you already have a key that works,
+keep it.
+
 ## Ignoring devices you do not want polled
 
 Every device refresh is a **write** -- it commands the device to report itself.

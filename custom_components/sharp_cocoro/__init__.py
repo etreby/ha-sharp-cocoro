@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from datetime import timedelta
+from pathlib import Path
 import traceback
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,8 +47,11 @@ PLATFORMS: list[Platform] = [Platform.FAN, Platform.CLIMATE, Platform.SENSOR]
 
 CocoroConfigEntry = ConfigEntry[Cocoro]
 
-# Token refresh interval (30 minutes)
-TOKEN_REFRESH_INTERVAL = timedelta(minutes=30)
+# Token refresh interval. Five minutes, not thirty: on some tenants the account
+# token lives only minutes -- measured, not assumed -- and a token that expires
+# mid-command is indistinguishable from a command the unit ignored. Refreshing
+# well inside the shortest observed lifetime costs one cheap call.
+TOKEN_REFRESH_INTERVAL = timedelta(minutes=5)
 
 
 @dataclass
@@ -170,6 +175,40 @@ class SharpCocoroData:
                 )
 
 
+# Where the ignore list comes from, in order of precedence:
+#
+#   1. the config entry's options, under "ignored_device_ids"
+#   2. <config>/sharp_cocoro_ignored_devices.json -- a JSON array of id strings
+#   3. nothing at all, which is the default and changes no behaviour
+#
+# Option 2 exists because this integration has no options flow yet, and editing
+# .storage by hand to add one key is worse than a two-line file next to
+# configuration.yaml.
+IGNORED_DEVICES_FILE = "sharp_cocoro_ignored_devices.json"
+
+
+def _ignored_device_ids(hass: HomeAssistant, entry: ConfigEntry) -> set[str]:
+    """Device ids to leave alone, as strings. Empty unless configured."""
+    from_options = entry.options.get("ignored_device_ids") or []
+    if from_options:
+        return {str(device_id) for device_id in from_options}
+
+    path = Path(hass.config.path(IGNORED_DEVICES_FILE))
+    if not path.is_file():
+        return set()
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        # Never fatal: a typo in an optional file must not stop the integration
+        # from loading the devices that do work.
+        _LOGGER.warning("Could not read %s, ignoring no devices: %s", path, err)
+        return set()
+    if not isinstance(loaded, list):
+        _LOGGER.warning("%s should contain a JSON list of device ids", path)
+        return set()
+    return {str(device_id) for device_id in loaded}
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: CocoroConfigEntry) -> bool:
     """Set up Sharp Cocoro Air from a config entry."""
     app_secret = entry.data[CONF_SECRET]
@@ -205,6 +244,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: CocoroConfigEntry) -> bo
             _LOGGER.error("No devices found")
             return False
 
+        # Drop devices that have no enabled entities. A refresh is a WRITE --
+        # each one commands the device to report itself -- so an account that
+        # also holds a unit somewhere else, with every one of its entities
+        # disabled in Home Assistant, still gets a control sent to it on every
+        # cycle. Those accounted for roughly half of this integration's failures
+        # before the list existed.
+        #
+        # The ids are deliberately not hardcoded, so this file carries no
+        # site-specific data. See _ignored_device_ids for where they are read
+        # from. The symptom that tells you a device belongs on the list is a log
+        # line reading "Failed to request refresh for device <id>" repeating on
+        # every cycle.
+        ignored_device_ids = _ignored_device_ids(hass, entry)
+        ignored = [d for d in devices if str(d.device_id) in ignored_device_ids]
+        if ignored:
+            devices = [d for d in devices if str(d.device_id) not in ignored_device_ids]
+            _LOGGER.info(
+                "Ignoring %d device(s) with no enabled entities: %s",
+                len(ignored),
+                [d.device_id for d in ignored],
+            )
+
         _LOGGER.info("Discovered %d device(s):", len(devices))
         for device in devices:
             _LOGGER.info("  - %s (ID: %s)", device.name, device.device_id)
@@ -221,7 +282,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: CocoroConfigEntry) -> bo
 
         # Set up periodic device refresh (every 60 seconds)
         # Note: Each refresh sends a command to the device to report fresh values
-        async_track_time_interval(hass, scd.async_refresh_data, timedelta(seconds=60))
+        # 180 s, not 60: every refresh is a control command to Sharp's cloud, and
+        # at 60 s per device half of them failed. The room temperature moves a
+        # degree every several minutes, so nothing readable is lost.
+        async_track_time_interval(hass, scd.async_refresh_data, timedelta(seconds=180))
 
         # Set up periodic token refresh (every 30 minutes)
         async def async_refresh_token(_):

@@ -51,31 +51,54 @@ async def execute_and_refresh(
         async_write_ha_state()
         _LOGGER.debug("Home Assistant state updated with optimistic values")
 
-        # If we have control IDs, wait for completion before refreshing
+        # Wait for the cloud to confirm, but do it in the background.
+        #
+        # Awaiting this inside the service call is what "the AC hangs when taking a
+        # command" was: six timed calls on 2026-08-19 blocked between 9.0 s and
+        # 11.7 s each, because execute, confirm and refresh all happened before
+        # Home Assistant answered the service. The optimistic state was already
+        # written above, so the card reacts at once and the confirmation catches up.
         if control_ids:
-            try:
-                _LOGGER.debug("Waiting for control completion...")
-                # Wait for controls to complete with shorter poll interval
-                completion_result = await cocoro.wait_for_control_completion(
-                    device,
-                    control_ids,
-                    timeout=5.0,  # 5 second timeout
-                    poll_interval=0.5  # Poll every 0.5 seconds
-                )
-                _LOGGER.debug("Controls completed successfully: %s", completion_result)
-                
-                # Immediately refresh after completion
-                _LOGGER.debug("Refreshing device state after control completion")
-                await cocoro_data.async_refresh_data()
-                
-            except TimeoutError:
-                _LOGGER.warning("Control completion timed out, falling back to debounced refresh")
-                # Fall back to debounced refresh
-                await debounced_refresh()
-            except Exception as e:
-                _LOGGER.error("Error waiting for control completion: %s", e)
-                # Fall back to debounced refresh
-                await debounced_refresh()
+
+            async def _confirm_and_refresh() -> None:
+                try:
+                    _LOGGER.debug("Waiting for control completion...")
+                    # 30 s, not 5: the unit answers through Sharp's cloud and the
+                    # confirmation regularly needs longer than five seconds.
+                    completion_result = await cocoro.wait_for_control_completion(
+                        device,
+                        control_ids,
+                        timeout=30.0,
+                        poll_interval=1.0,
+                    )
+                    _LOGGER.debug("Controls completed successfully: %s", completion_result)
+                    _LOGGER.debug("Refreshing device state after control completion")
+                    await cocoro_data.async_refresh_data()
+                except TimeoutError:
+                    _LOGGER.warning(
+                        "Control completion timed out, falling back to debounced refresh"
+                    )
+                    await debounced_refresh()
+                except Exception as err:
+                    # A 401 here used to be terminal: the re-login below covered
+                    # execute_queued_updates only, so a token expiring between the
+                    # command and its confirmation left the command unconfirmed --
+                    # which is what "it did not take" looks like from the outside.
+                    if "401" in str(err) or "unauthorized" in str(err).lower():
+                        _LOGGER.info(
+                            "Auth error while waiting for completion, re-logging in"
+                        )
+                        try:
+                            await cocoro_data.async_login()
+                            await cocoro_data.async_refresh_data()
+                            return
+                        except Exception as retry_error:
+                            _LOGGER.error("Re-login after 401 failed: %s", retry_error)
+                    else:
+                        _LOGGER.error("Error waiting for control completion: %s", err)
+                    await debounced_refresh()
+
+            cocoro_data.hass.async_create_task(_confirm_and_refresh())
         else:
             # No control IDs, use debounced refresh as before
             await debounced_refresh()

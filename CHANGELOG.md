@@ -6,9 +6,15 @@ clear what this fork is based on and what it adds.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Upstream is [dvcrn/ha-sharp-cocoro](https://github.com/dvcrn/ha-sharp-cocoro).
 
-## Fork changes — `local-changes`, rebased on upstream `main` (1.3.3)
+## 1.4.0 — fork build, based on upstream 1.3.3
 
-Everything in this section is in this fork only.
+Everything in this section is in this fork only. The version is bumped from
+upstream's `1.3.3` so that Home Assistant and HACS show which build is
+installed — a fork that reported `1.3.3` would be indistinguishable from
+upstream in the integrations page. It is a minor bump because this adds
+entities rather than only fixing behaviour. Upstream's own numbering is
+unaffected; HACS follows this repository's default branch, not a version
+comparison against upstream.
 
 ### Added
 

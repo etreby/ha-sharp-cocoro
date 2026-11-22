@@ -222,6 +222,37 @@ def _ignored_device_ids(hass: HomeAssistant, entry: ConfigEntry) -> set[str]:
     return {str(device_id) for device_id in loaded}
 
 
+async def _query_devices_tolerant(cocoro):
+    """Query devices, skipping boxes this credential cannot read.
+
+    ``Cocoro.query_devices`` walks every box ``boxInfo`` returns and raises on
+    the first one whose ``deviceProperty`` call fails (HTTP 400). An account can
+    hold a box that the active terminalAppId was never paired to -- it still
+    appears in ``boxInfo`` but is unreadable -- which made the whole integration
+    fail to set up. Query one box at a time, reusing the library's own device
+    construction, and skip the boxes that error so the readable ones load.
+    """
+    boxes = await cocoro.query_boxes()
+    original_query_boxes = cocoro.query_boxes
+    devices = []
+    try:
+        for box in boxes:
+            async def _single(_box=box):
+                return [_box]
+            cocoro.query_boxes = _single
+            try:
+                devices.extend(await cocoro.query_devices())
+            except Exception as err:  # noqa: BLE001 -- one bad box must not sink the rest
+                _LOGGER.warning(
+                    "Skipping Sharp Cocoro box this account cannot read (%s): %s",
+                    getattr(box, "boxId", "?"),
+                    err,
+                )
+    finally:
+        cocoro.query_boxes = original_query_boxes
+    return devices
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: CocoroConfigEntry) -> bool:
     """Set up Sharp Cocoro Air from a config entry."""
     app_secret = entry.data[CONF_SECRET]
@@ -251,7 +282,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: CocoroConfigEntry) -> bo
         _LOGGER.info("Login successful")
         
         _LOGGER.info("Querying devices")
-        devices = list(await cocoro.query_devices())
+        devices = list(await _query_devices_tolerant(cocoro))
         _LOGGER.info("Query devices successful, found %d devices", len(devices) if devices else 0)
 
         if not devices:

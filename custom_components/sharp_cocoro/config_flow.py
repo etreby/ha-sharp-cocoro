@@ -10,6 +10,7 @@ import voluptuous as vol
 from sharp_cocoro import Cocoro
 
 from .const import DOMAIN
+from .const import apply_region_api_base
 
 from homeassistant.config_entries import ConfigFlow
 from homeassistant.config_entries import ConfigFlowResult
@@ -42,6 +43,7 @@ class PlaceholderHub:
     async def authenticate(self, username: str, password: str, service_name:str, session) -> bool:
         """Test if we can authenticate with the host."""
         async with Cocoro(app_secret=password, app_key=username, service_name=service_name, session=session) as cocoro:
+            apply_region_api_base(cocoro, service_name)
             await cocoro.login()
             return cocoro.is_authenticated
 

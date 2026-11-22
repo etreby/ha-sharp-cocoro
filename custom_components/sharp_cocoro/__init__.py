@@ -235,7 +235,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: CocoroConfigEntry) -> bo
         _LOGGER.info("Creating Cocoro client with session")
         # Create Cocoro client with HA's session to avoid SSL blocking
         cocoro = Cocoro(app_secret=app_secret, app_key=app_key, service_name=app_service_name, session=session)
-        _LOGGER.info("Successfully created Cocoro client")
+        apply_region_api_base(cocoro, app_service_name)
+        _LOGGER.info("Successfully created Cocoro client (api_base=%s)", cocoro.api_base)
     except Exception as e:
         _LOGGER.error("Failed to create Cocoro client: %s", e)
         _LOGGER.error("Traceback: %s", traceback.format_exc())
